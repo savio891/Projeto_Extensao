@@ -1,0 +1,17 @@
+Considerações sobre o projeto Automação_PDF:
+
+Objetivo principal: pegar todas as informações em uma pasta com vários pdfs, processar os dados com uso de prompt e gerar uma saída para um arquivo externo.
+
+Etapa 1: Instalação do Java, Python e suas respectivas bibliotecas (PyPDF2, google-ai-generative, pandas) => concluída
+
+Etapa 2: Criação do arquivo Extrator para extrair informações do PDF => concluída
+
+Etapa 3: Criação do arquivo Processador_IA para processar dados e gerar uma saída em texto => concluída
+
+	Melhorias: 
+		durante o processamento o programa pedir parâmetros de entrada de pasta e saída de resultados => concluída
+		Permitir que o arquivo de instruções se torne anexável => concluída
+		Permitir que o programa tenha parâmetros de entrada (provedor, chave e versão IA) => concluída
+		Permitir que a chave referente ao provedor seja armazenada em um arquivo JSON => concluída
+		Adição de mais duas inteligências artificiais => concluída
+		Inclusão do log de processamento => concluída
