@@ -1,39 +1,51 @@
 import os
-from dotenv import load_dotenv
 
 CONFIG_ENV = ".env"
 
 def armazenar_chave(provedor, chave):
-    # Salva ou atualiza a chave API no arquivo ENV
+    # Salva ou atualiza a chave API no arquivo ENV (Sua lógica perfeita)
     campo_provedor = f"{provedor.upper()}_KEY"
     linhas_atualizadas = []
     chave_cadastrada = False
 
-    # 1. Se o arquivo já existe, lê as chaves antigas para preservar os outros provedores
     if os.path.exists(CONFIG_ENV):
         with open(CONFIG_ENV, "r", encoding="utf-8") as f:
             for linha in f:
-                # Se a linha começar com o provedor atual (ex: GEMINI_KEY=), nós a substituímos
                 if linha.strip().startswith(f"{campo_provedor}="):
                     linhas_atualizadas.append(f"{campo_provedor}={chave.strip()}\n")
                     chave_cadastrada = True
                 else:
                     linhas_atualizadas.append(linha)
 
-    # 2. Se a chave não existia antes (ou o arquivo é novo), adiciona ela ao final
     if not chave_cadastrada:
         linhas_atualizadas.append(f"{campo_provedor}={chave.strip()}\n")
 
-    # 3. Grava as informações de volta no arquivo oculto
     with open(CONFIG_ENV, "w", encoding="utf-8") as f:
         f.writelines(linhas_atualizadas)
 
 def carregar_chave(provedor):
-    """Carrega o arquivo .env e busca a chave do provedor solicitado."""
-    # Recarrega o arquivo .env para garantir que pegamos alterações recentes
-    load_dotenv(dotenv_path=CONFIG_ENV, override=True)
+    """
+    Carrega a chave lendo o arquivo .env diretamente como texto.
+    Isso evita bugs de cache de memória do load_dotenv que corrompem a string da chave.
+    """
+    campo_provedor = f"{provedor.upper()}_KEY="
     
-    nome_variavel = f"{provedor.upper()}_KEY"
-    
-    # Busca a variável de ambiente do sistema operacional
-    return os.getenv(nome_variavel)
+    if not os.path.exists(CONFIG_ENV):
+        return None
+        
+    try:
+        with open(CONFIG_ENV, "r", encoding="utf-8") as f:
+            for linha in f:
+                linha_limpa = linha.strip()
+                if linha_limpa.startswith(campo_provedor):
+                    # Divide a linha no '=' e pega apenas o valor da chave à direita
+                    chave = linha_limpa.split("=", 1)[1]
+                    return chave.strip()
+    except Exception:
+        return None
+    return None
+
+def obter_chaves_salvas(provedor):
+    """Retorna a chave em formato de lista para o Combobox da interface"""
+    chave = carregar_chave(provedor)
+    return [chave] if chave else []
