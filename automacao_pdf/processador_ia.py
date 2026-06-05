@@ -26,15 +26,9 @@ def diretorio_entrada():
             title="Selecione uma pasta com PDFs:",
             mustexist=True
         )
-
-        # Verifica se o usuário fechou ou cancelou a janela
-        if not caminho_entrada:
-            messagebox.showwarning("Aviso", "Operação cancelada pelo usuário.")
-            return None
         
         # Verifica se realmente a pasta existe e está acessível
-        if not os.path.exists(caminho_entrada):
-            messagebox.showwarning("Erro", "O caminho selecionado não existe.")
+        if not caminho_entrada:
             return None
         
         # Verifica se o usuário tem permissão de leitura na pasta
@@ -61,12 +55,16 @@ def diretorio_saida():
             filetypes=[("Arquivos de Texto", "*.txt"), ("Todos os arquivos", "*.*")],
             initialfile="resultado_final.txt"
         )
-        # Verifica se o usuário fechou a janela ou cancelou a operação
+
         if not caminho_salvamento:
-            messagebox.showwarning(
-                "Aviso",
-                "O arquivo não foi salvo porque a operação foi cancelada."
-            )
+            return None
+        
+        # Extrai apenas a pasta onde o arquivo será salvo
+        pasta_destino = os.path.dirname(caminho_salvamento)
+            
+        # Verifica se o usuário tem permissão de ESCRITA (W_OK) na pasta de destino
+        if not os.access(pasta_destino, os.W_OK):
+            messagebox.showwarning("Aviso", "Você não tem permissão de gravação nesta pasta.")
             return None
 
         return caminho_salvamento
@@ -80,12 +78,12 @@ def diretorio_saida():
         return None
     
 # Realizar o processamento dos arquivos PDFs mediante às instruções do PROMPT
-def processar_arquivos(provider, key, model_version, caminho_prompt, pasta_entrada, pasta_saida, callback_progresso):
+def processar_arquivos(provider, key, model_version, caminho_prompt, pasta_entrada, pasta_saida, buscar_subpastas, callback_progresso):
     try:
         # Configuração da IA usando os dados coletados da tela na hora do clique
         chamar_ia = seletor_ia(provider=provider, key=key, model=model_version)
         if not chamar_ia:
-            return "Falha ao inicializar o servidor IA. Verifique sua chave API."
+            return "Falha ao inicializar o servidor IA. Verifique se sua chave API ou Servidor estão corretos."
         
         # Carregamento do Prompt
         with open(caminho_prompt, "r", encoding="utf-8") as file:
@@ -102,8 +100,20 @@ def processar_arquivos(provider, key, model_version, caminho_prompt, pasta_entra
         agora = datetime.now()
         data_formatada = agora.strftime("%d/%m/%Y às %H:%M")
 
+        # Cria a lista com os PDFs com base na escolha do Checkbox
+        if buscar_subpastas:
+            arquivos_pdf_com_caminho = []
+            for raiz, diretorios, arquivos in os.walk(pasta_entrada):
+                for arquivo in arquivos:
+                    if arquivo.lower().endswith(".pdf"):
+                        # Guarda o caminho completo relativo para sabermos onde o arquivo está
+                        caminho_completo_arquivo = os.path.join(raiz, arquivo)
+                        caminho_relativo = os.path.relpath(caminho_completo_arquivo, pasta_entrada)
+                        arquivos_pdf_com_caminho.append(caminho_relativo)
+            arquivos_pdf = arquivos_pdf_com_caminho
+        else:
+            arquivos_pdf = [f for f in os.listdir(pasta_entrada) if f.lower().endswith(".pdf")]
         # Cria a lista com os PDFs
-        arquivos_pdf = [f for f in os.listdir(pasta_entrada) if f.lower().endswith(".pdf")]
         total_arquivos = len(arquivos_pdf)
 
         if total_arquivos == 0:
@@ -145,21 +155,41 @@ def processar_arquivos(provider, key, model_version, caminho_prompt, pasta_entra
                 else:
                     linhas_log.append(f"     => Falha no processo de extração ({nome_arquivo}): {texto_pdf}")
             
-            except Exception as e_interno:
-                # Se um arquivo falhar, registra no log e continua o loop para os outros arquivos
-                linhas_log.append(f"     => Erro inesperado no arquivo {nome_arquivo}: {str(e_interno)}")
+            except Exception as e:
+                erro_msg = str(e).lower()
+
+                # 1. VERIFICAÇÃO DE MODELO INDISPONÍVEL / INCOMPATÍVEL
+                if "404" in erro_msg or "not available" in erro_msg or "not found" in erro_msg:
+                    linhas_log.append(f"     => PROCESSAMENTO INTERROMPIDO: O modelo selecionado ({model_version}) não está mais disponível ou não foi encontrado.")
+                    salvar_log_final(pasta_saida, linhas_log)
+                    return f"O modelo '{model_version}' foi descontinuado ou não está disponível para esta chave. Escolha um modelo mais recente."
+                
+                # LISTA DE PALAVRAS-CHAVE DE ERROS FINANCEIROS, LIMITE OU COTA (Gemini e OpenAI)
+                termos_bloqueio = ["quota", "insufficient", "exhausted", "credit", "rate_limit"]
+                
+                # 2. CAPTURA CIRÚRGICA: Se o erro for de saldo, cota ou limite de requisições, interrompe o loop na hora!
+                if any(termo in erro_msg for termo in termos_bloqueio):
+                    linhas_log.append(f"     => PROCESSAMENTO INTERROMPIDO: A conta atingiu o limite, restrição de cota ou falta de saldo para o processamento. Verifique com a sua provedora essa pendência.")
+                    
+                    # Salva o log parcial até o momento antes de abortar
+                    salvar_log_final(pasta_saida, linhas_log)
+                    return "A conta atingiu o limite, restrição de cota ou falta de saldo para o processamento. Verifique com a sua provedora essa pendência."
+                
+                # Se for outro tipo de erro comum (ex: PDF corrompido, falha de leitura), registra e continua os outros
+                linhas_log.append(f"     => Erro inesperado no arquivo {nome_arquivo}: {str(e)}")
                 continue
 
-        # --- FIM DO LOOP FOR (A identação foi movida para fora do loop) ---
-        # Salvamento do arquivo Log ocorre apenas quando TODOS os arquivos terminam
-        destino_log = os.path.dirname(pasta_saida)
-        caminho_log = os.path.join(destino_log, "log_processamento.txt")
-        linhas_log.append("Processamento concluído!")
-
-        with open(caminho_log, "w", encoding="utf-8") as f_log:
-            f_log.write("\n".join(linhas_log) + "\n")
-        
+        salvar_log_final(pasta_saida, linhas_log)
         return "Sucesso"
 
     except Exception as e:
         return f"Erro crítico no processamento: {str(e)}"
+    
+# Função auxiliar isolada para gerar o arquivo de log e não duplicar código
+def salvar_log_final(pasta_saida, linhas_log):
+    destino_log = os.path.dirname(pasta_saida)
+    caminho_log = os.path.join(destino_log, "log_processamento.txt")
+    if "concluído" not in linhas_log[-1] and "INTERROMPIDO" not in linhas_log[-1]:
+        linhas_log.append("Processamento finalizado.")
+    with open(caminho_log, "w", encoding="utf-8") as f_log:
+        f_log.write("\n".join(linhas_log) + "\n")    

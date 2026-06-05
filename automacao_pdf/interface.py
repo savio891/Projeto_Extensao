@@ -2,8 +2,7 @@ import threading
 import customtkinter as ctk
 from tkinter import ttk, messagebox
 from configurador import obter_chaves_salvas, armazenar_chave, carregar_chave
-
-
+from gerenciador_ia import seletor_ia, listar_modelos_disponiveis
 
 # --- IMPORTAÇÃO DO SEU MOTOR REAL ---
 from processador_ia import (
@@ -13,22 +12,12 @@ from processador_ia import (
     processar_arquivos
 )
 
-# Simulando o seu configurador. amanhã você pode trocar pelas suas funções reais
-# que lêem o arquivo .env ou .json
-
 def open_interface():
     window = ctk.CTk()
     window.title("Automação Processamento de PDFs com IA")
-    window.geometry("700x680")
+    window.geometry("700x600")
     window.configure(fg_color="#f5f5f5")
     ctk.set_appearance_mode("Light") 
-
-    # --- DICIONÁRIO DE MODELOS PADRÃO ---
-    MODELOS_POR_PROVEDOR = {
-        "Gemini": ["gemini-3.1-flash-lite", "gemini-3-flash-preview", "gemini-3.5-flash"],
-        "OpenAI": ["gpt-5.4-mini", "gpt-5.4", "gpt-5.5"],
-        "Claude": ["claude-opus-4-8", "claude-sonnet-4-6", "claude-haiku-4-5-20251001"]
-    }
 
     # --- VARIÁVEIS DE CONTROLE ---
     caminho_prompt_var = ctk.StringVar(value="Nenhum arquivo selecionado")
@@ -39,19 +28,55 @@ def open_interface():
     def atualizar_campos_por_provedor(event=None):
         provedor_selecionado = combo_provider.get()
         
-        # 1. Atualiza os modelos recomendados no Combobox de Modelos
-        modelos_disponiveis = MODELOS_POR_PROVEDOR.get(provedor_selecionado, [])
-        combo_model.configure(values=modelos_disponiveis)
-        if modelos_disponiveis:
-            combo_model.set(modelos_disponiveis[0]) # Seleciona o primeiro por padrão
-            
-        # 2. Busca as chaves já salvas para esse provedor e atualiza o Combobox de Chaves
+        # 1. VALIDAÇÃO SE FOR "NENHUM": Limpa e desativa os campos de credenciais
+        if provedor_selecionado == "Nenhum":
+            combo_key.configure(values=[])
+            combo_key.set("")
+            combo_model.configure(values=["Selecione um Provedor IA..."], state="disabled")
+            combo_model.set("Selecione um Provedor IA...")
+            return  # Interrompe a função aqui de forma segura
+
+        # 2. Busca a chave já salva no .env para esse provedor específico
         chaves_salvas = obter_chaves_salvas(provedor_selecionado)
-        combo_key.configure(values=chaves_salvas)
+
         if chaves_salvas:
-            combo_key.set(chaves_salvas[0]) # Preenche automaticamente com a última chave
+            combo_key.configure(values=chaves_salvas)
+            combo_key.set(chaves_salvas[0])
+            chave_atual = chaves_salvas[0]
         else:
-            combo_key.set("") # Fica vazio se não tiver chave salva
+            combo_key.configure(values=[])
+            combo_key.set("")
+            chave_atual = ""
+
+        # 3. Se não houver chave salva, avisa o usuário que ele precisa inserir uma para liberar os modelos
+        if not chave_atual.strip():
+            combo_model.configure(values=["Insira uma API key válida..."], state="disabled")
+            combo_model.set("Insira uma API key válida...")
+            return
+
+        # 4. Se houver chave, reseta o Combobox de Modelos para o estado de espera
+        combo_model.configure(values=["Carregando modelos da sua chave..."], state="disabled")
+        combo_model.set("Carregando modelos da sua chave...")
+
+        # 5. Dispara uma Thread separada para buscar os modelos na API vinculados a essa Chave específica
+        def buscar_modelos_thread(prov, key):
+            modelos_reais = listar_modelos_disponiveis(prov, key)
+
+            # Se o primeiro item começar com "ERRO:", exibe o aviso específico da API
+            if modelos_reais and str(modelos_reais[0]).startswith("ERRO:"):
+                mensagem_erro = modelos_reais[0]
+                window.after(0, lambda: combo_model.configure(values=[mensagem_erro]))
+                window.after(0, lambda: combo_model.set(mensagem_erro))
+                window.after(0, lambda: combo_model.configure(state="disabled"))
+            elif modelos_reais:
+                window.after(0, lambda: combo_model.configure(values=modelos_reais, state="readonly"))
+                window.after(0, lambda: combo_model.set(modelos_reais[0]))
+            else:
+                window.after(0, lambda: combo_model.configure(values=["Chave API Inválida ou Sem Permissão"]))
+                window.after(0, lambda: combo_model.set("Chave API Inválida ou Sem Permissão"))
+                window.after(0, lambda: combo_model.configure(state="disabled"))
+        
+        threading.Thread(target=buscar_modelos_thread, args=(provedor_selecionado, chave_atual), daemon=True).start()
 
     # --- FUNÇÕES DOS BOTÕES DE BUSCA ---
     def acionar_busca_prompt():
@@ -66,10 +91,11 @@ def open_interface():
         caminho = diretorio_saida()
         if caminho: pasta_saida_var.set(caminho)
 
-    # --- FUNÇÃO DO NOVO BOTÃO LIMPAR ---
+    # --- FUNÇÃO DO BOTÃO LIMPAR CONFIGURADA PARA VOLTAR AO "NENHUM" ---
     def limpar_todos_os_campos():
         if messagebox.askyesno("Limpar Campos", "Deseja realmente limpar todos os caminhos e chaves da tela?"):
-            combo_key.set("")
+            combo_provider.set("Nenhum")
+            atualizar_campos_por_provedor() # Força o reset visual dos campos de chave/modelo
             caminho_prompt_var.set("Nenhum arquivo selecionado")
             pasta_entrada_var.set("Nenhuma pasta selecionada")
             pasta_saida_var.set("Nenhum local definido")
@@ -90,16 +116,28 @@ def open_interface():
         prompt = caminho_prompt_var.get()
         entrada = pasta_entrada_var.get()
         saida = pasta_saida_var.get()
+        subpastas_ativo = chk_subpastas_var.get()
 
-        if not chave.strip():
-            messagebox.showwarning("Campos Vazios", "Por favor, selecione ou digite uma Chave API.")
+        # Bloqueia a execução se houver mensagens de erro registradas no campo do modelo
+        if "ERRO:" in modelo or "saldo" in modelo.lower() or "cota" in modelo.lower():
+            messagebox.showerror("Erro de Créditos/Cota", "Não é possível iniciar. Verifique o saldo e faturamento da sua conta de IA.")
+            return
+
+        # Evita prosseguir caso esteja marcado como "Nenhum"
+        if provedor == "Nenhum":
+            messagebox.showwarning("Provedor Ausente", "Por favor, selecione um Provedor de IA válido para processar.")
+            return
+
+        if not chave.strip() or chave == "Insira uma API key válida...":
+            messagebox.showwarning("Campos Vazios", "Por favor, selecione ou digite uma Chave API válida.")
             return
         
         armazenar_chave(provedor, chave)
 
-        if not modelo.strip():
-            messagebox.showwarning("Campos Vazios", "Por favor, selecione ou digite o modelo de IA.")
+        if not modelo.strip() or "válida" in modelo or "Carregando" in modelo or "Selecione" in modelo or "Inválida" in modelo:
+            messagebox.showwarning("Modelo Inválido", "Por favor, selecione um modelo de IA válido carregado da sua conta.")
             return
+            
         if "Nenhum" in prompt or "Nenhuma" in entrada or "Nenhum" in saida:
             messagebox.showwarning("Arquivos Ausentes", "Selecione todos os caminhos antes de iniciar.")
             return
@@ -113,6 +151,7 @@ def open_interface():
             resultado = processar_arquivos(
                 provider=provedor, key=chave, model_version=modelo,
                 caminho_prompt=prompt, pasta_entrada=entrada, pasta_saida=saida,
+                buscar_subpastas=subpastas_ativo,
                 callback_progresso=atualizar_progresso_gui
             )
 
@@ -130,6 +169,46 @@ def open_interface():
 
         threading.Thread(target=rotina_segundo_plano).start()
 
+    # --- GATILHO INTELIGENTE PARA QUANDO O USUÁRIO DIGITA UMA CHAVE MANUALMENTE ---
+    def disparar_busca_por_digitacao(*args):
+        prov = combo_provider.get()
+        key = combo_key.get().strip()
+        
+        if prov == "Nenhum":
+            return
+        
+        if not key:
+            combo_model.configure(values=["Insira uma API key válida..."], state="disabled")
+            combo_model.set("Insira uma API key válida...")
+            return
+
+        # Evita buscar se o texto for apenas os avisos padrão
+        if "válida" in key or "Carregando" in key:
+            return
+        
+        combo_model.configure(values=["Carregando modelos da nova chave..."], state="disabled")
+        combo_model.set("Carregando modelos da nova chave...")
+            
+        def buscar_modelos_digitados(prov, key):
+            modelos_reais = listar_modelos_disponiveis(prov, key)
+            
+            # Se o primeiro item começar com "ERRO:", exibe o aviso específico da API
+            if modelos_reais and str(modelos_reais[0]).startswith("ERRO:"):
+                mensagem_erro = modelos_reais[0]
+                window.after(0, lambda: combo_model.configure(values=[mensagem_erro], state="disabled"))
+                window.after(0, lambda: combo_model.set(mensagem_erro))
+                window.after(0, lambda: combo_model.configure(state="disabled"))
+            elif modelos_reais:
+                window.after(0, lambda: combo_model.configure(values=modelos_reais, state="readonly"))
+                window.after(0, lambda: combo_model.set(modelos_reais[0]))
+            else:
+                window.after(0, lambda: combo_model.configure(values=["Chave API Inválida ou Sem Permissão"], state="disabled"))
+                window.after(0, lambda: combo_model.set("Chave API Inválida ou Sem Permissão"))
+                window.after(0, lambda: combo_model.configure(state="disabled"))
+
+        threading.Thread(target=buscar_modelos_digitados, args=(prov, key), daemon=True).start()
+
+
     # --- DESIGN DA INTERFACE ---
     ctk.CTkLabel(window, text="Painel de Configurações", font=("Arial", 18, "bold"), text_color="#333333").pack(pady=(15, 5))
 
@@ -138,18 +217,18 @@ def open_interface():
     frame_config.pack(padx=30, pady=10, fill="x")
 
     ctk.CTkLabel(frame_config, text="Provedor IA:", font=("Arial", 11, "bold"), text_color="#444444").grid(row=0, column=0, padx=(20, 15), pady=12, sticky="e")
-    combo_provider = ctk.CTkComboBox(frame_config, values=["Gemini", "OpenAI", "Claude"], state="readonly", width=310, command=atualizar_campos_por_provedor)
-    combo_provider.set("Gemini")
+    # Agora inicia com "Nenhum" por padrão
+    combo_provider = ctk.CTkComboBox(frame_config, values=["Nenhum", "Gemini", "OpenAI", "Claude"], state="readonly", width=310, command=atualizar_campos_por_provedor)
+    combo_provider.set("Nenhum")
     combo_provider.grid(row=0, column=1, columnspan=2, pady=12, sticky="w")
 
     ctk.CTkLabel(frame_config, text="API Key:", font=("Arial", 11, "bold"), text_color="#444444").grid(row=1, column=0, padx=(20, 15), pady=12, sticky="e")
-    # Trocado para ctk.CTkComboBox que aceita digitação livre (state="normal")
     combo_key = ctk.CTkComboBox(frame_config, width=310, state="normal")
     combo_key.grid(row=1, column=1, columnspan=2, pady=12, sticky="w")
 
     ctk.CTkLabel(frame_config, text="Modelo IA:", font=("Arial", 11, "bold"), text_color="#444444").grid(row=2, column=0, padx=(20, 15), pady=12, sticky="e")
-    # Trocado para ctk.CTkComboBox que aceita digitação livre (state="normal")
-    combo_model = ctk.CTkComboBox(frame_config, width=310, state="normal")
+    combo_model = ctk.CTkComboBox(frame_config, width=310, state="disabled")
+    combo_model.set("Selecione um Provedor IA...")
     combo_model.grid(row=2, column=1, columnspan=2, pady=12, sticky="w")
 
     # Bloco 2: Caminhos e Arquivos
@@ -171,7 +250,13 @@ def open_interface():
     ctk.CTkEntry(frame_arquivos, textvariable=pasta_saida_var, width=260, state="readonly").grid(row=2, column=1, pady=10, sticky="w")
     ctk.CTkButton(frame_arquivos, text="Definir...", font=("Arial", 10), width=80, cursor="hand2", command=acionar_busca_saida).grid(row=2, column=2, padx=(15, 20), pady=10, sticky="w")
 
-    # --- CONTÊINER DOS BOTÕES DO RODAPÉ (Alinhamento Lado a Lado) ---
+    ctk.CTkLabel(frame_arquivos, text="Opções Avançadas:", font=("Arial", 11, "bold"), text_color="#444444").grid(row=3, column=0, padx=(20, 15), pady=10, sticky="e")
+
+    chk_subpastas_var = ctk.BooleanVar(value=False)
+    chk_subpastas = ctk.CTkCheckBox(frame_arquivos, text="Incluir arquivos de subpastas", font=("Arial", 11), variable=chk_subpastas_var)
+    chk_subpastas.grid(row=3, column=1, columnspan=2, pady=10, sticky="w")
+
+    # --- CONTÊINER DOS BOTÕES DO RODAPÉ ---
     frame_botoes_acao = ctk.CTkFrame(window, fg_color="transparent")
     frame_botoes_acao.pack(pady=20)
 
@@ -185,7 +270,7 @@ def open_interface():
 
     btn_limpar = ctk.CTkButton(
         frame_botoes_acao, text="LIMPAR CAMPOS", font=("Arial", 12, "bold"),
-        fg_color="#e74c3c", hover_color="#c0392b", text_color="white", # Vermelho corporativo elegante
+        fg_color="#e74c3c", hover_color="#c0392b", text_color="white",
         border_width=2, border_color="#962d22", corner_radius=10, height=45, width=160,
         cursor="hand2", command=limpar_todos_os_campos
     )
@@ -201,7 +286,14 @@ def open_interface():
     progress_bar = ctk.CTkProgressBar(window, width=450, height=12, corner_radius=6, fg_color="#e0e0e0", progress_color="#2ecc71")
     progress_bar.set(0.0)
 
-    # Executa a primeira carga para o Gemini (padrão) abrir populado
+    # --- VÍNCULOS E CARGA INICIAL SEÇÃO SEGURA ---
+    key_string_var = ctk.StringVar()
+    combo_key.configure(variable=key_string_var)
+    
+    # O comando 'trace_add' monitora o modo "write" (qualquer digitação/deleção) e chama a função na hora!
+    key_string_var.trace_add("write", disparar_busca_por_digitacao)
+    
+    # Chama a função inicializer para carregar o estado "Nenhum" e blindar os objetos
     atualizar_campos_por_provedor()
 
     window.mainloop()

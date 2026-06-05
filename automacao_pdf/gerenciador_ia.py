@@ -43,5 +43,87 @@ def seletor_ia(provider, key, model):
             return response.choices[0].message.content
         return executar_openai
     else:
-        messagebox.showwarning(f"Provedor '{provider} não é suportado.'")
+        messagebox.showwarning(f"Aviso:", "É preciso selecionar um provedor IA!")
         return None
+    
+def listar_modelos_disponiveis(provider, key):
+    if not key or not key.strip():
+        return []
+    
+    provider = provider.lower()
+    modelos = []
+
+    try:
+        if provider == "gemini":
+            import google.generativeai as genai
+            from google.api_core import exceptions as google_exceptions
+            
+            try:
+                genai.configure(api_key=key.strip())
+                for m in genai.list_models():
+                    if 'generateContent' in m.supported_generation_methods:
+                        nome_limpo = m.name.split('/')[-1]
+
+                        # FILTRO INTELIGENTE: Ignora modelos descontinuados, experimentais ou de robótica
+                        modelos_obsoletos = ["tunedModels", "-preview", "robotics", "vision"]
+                        if any (modelo in m.name for modelo in modelos_obsoletos):
+                            continue # Pula este modelo e vai para o próximo
+
+                        if nome_limpo.startswith("gemini-") and "tunedModels" not in m.name:
+                            if nome_limpo not in modelos:
+                                modelos.append(nome_limpo)
+                modelos.sort()
+            except google_exceptions.ResourceExhausted:
+                return ["ERRO: Cota esgotada ou sem saldo no Google Gemini"]
+            except google_exceptions.InvalidArgument:
+                return ["ERRO: Chave API inválida no Gemini"]
+            except Exception as e:
+                # Captura de segurança caso o Google mude a classe do erro de saldo
+                if "quota" in str(e).lower() or "exhausted" in str(e).lower():
+                    return ["ERRO: Cota esgotada ou sem saldo no Google Gemini"]
+                return [f"ERRO: Falha na API do Gemini ({str(e)})"]
+
+        elif provider == "openai":
+            import openai
+            try:
+                client = openai.OpenAI(api_key=key.strip())
+                lista_api = client.models.list()
+
+                for m in lista_api.data:
+                    id_modelo = m.id
+
+                    # 1. FILTRO DE PREFIXO: Garante que pertence às famílias de chat estáveis
+                    if id_modelo.startswith("gpt-") or (id_modelo.startswith("o") and id_modelo[1:2].isdigit()):
+                        
+                        # 2. FILTRO DE OBSOLETOS: Evita modelos experimentais, de áudio ou datados antigamente
+                        modelos_obsoletos = ["-realtime", "-audio", "-preview", "2024", "2023", "instruct"]
+                        if any(modelo in id_modelo for modelo in modelos_obsoletos):
+                            continue # Pula esses modelos específicos
+
+                        if id_modelo not in modelos:
+                            modelos.append(id_modelo)
+
+                    # Adiciona o gpt-4o e o gpt-4o-mini manualmente como garantia se a API omitir
+                if not modelos:
+                    modelos = ["gpt-4o-mini", "o3-mini", "gpt-4o", "o1"]
+
+                modelos.sort()
+            except openai.RateLimitError:
+                return ["ERRO: Conta sem saldo ou plano expirado na OpenAI"]
+            except openai.AuthenticationError:
+                return ["ERRO: Chave API inválida na OpenAI"]
+            except Exception as e:
+                # Captura cirúrgica do erro JSON 'insufficient_quota' enviado no seu log
+                erro_msg = str(e).lower()
+                if "quota" in erro_msg or "insufficient" in erro_msg or "credit" in erro_msg:
+                    return ["ERRO: Conta sem saldo ou plano expirado na OpenAI"]
+                return [f"ERRO: Falha na API da OpenAI ({str(e)})"]
+
+        elif provider == "claude":
+            modelos = ["claude-3-5-sonnet", "claude-3-5-haiku", "claude-3-opus", "claude-3-haiku"]
+
+    except Exception as e:
+        print(f"Erro ao listar modelos do {provider}: {str(e)}")
+        return []
+
+    return modelos
