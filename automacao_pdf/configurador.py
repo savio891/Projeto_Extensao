@@ -49,3 +49,28 @@ def obter_chaves_salvas(provedor):
     """Retorna a chave em formato de lista para o Combobox da interface"""
     chave = carregar_chave(provedor)
     return [chave] if chave else []
+
+def remover_chave_salva(provedor, chave_remover):
+    import os
+    provedor_upper = str(provedor).upper()
+    prefixo = f"{provedor_upper}_KEY"
+
+    if not os.path.exists(".env"):
+        return
+    
+    linhas_finais = []
+    with open(".env", "r", encoding="utf-8") as f:
+        linhas = f.readlines()
+    
+    for linha in linhas:
+        # Se a linha for do provedor atual, verificamos se é a chave que queremos apagar
+        if linha.strip().startswith(prefixo):
+            partes = linha.strip().split("=", 1)
+            if len(partes) == 2:
+                chave_linha = partes[1].strip()
+                if chave_linha == chave_remover.strip():
+                    continue # Pula essa linha (deletando-a do arquivo)
+        linhas_finais.append(linha)
+
+    with open(".env", "w", encoding="utf-8") as f:
+        f.writelines(linhas_finais)

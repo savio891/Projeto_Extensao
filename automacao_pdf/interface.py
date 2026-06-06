@@ -1,7 +1,7 @@
 import threading
 import customtkinter as ctk
 from tkinter import ttk, messagebox
-from configurador import obter_chaves_salvas, armazenar_chave, carregar_chave
+from configurador import obter_chaves_salvas, armazenar_chave, carregar_chave, remover_chave_salva
 from gerenciador_ia import seletor_ia, listar_modelos_disponiveis
 
 # --- IMPORTAÇÃO DO SEU MOTOR REAL ---
@@ -23,6 +23,83 @@ def open_interface():
     caminho_prompt_var = ctk.StringVar(value="Nenhum arquivo selecionado")
     pasta_entrada_var = ctk.StringVar(value="Nenhuma pasta selecionada")
     pasta_saida_var = ctk.StringVar(value="Nenhum local definido")
+
+    # --- FUNÇÃO DO POP-UP GERENCIADOR DE CHAVES ---
+    def abrir_gerenciador_chaves():
+        provedor_atual = combo_provider.get()
+        if provedor_atual == "Nenhum":
+            messagebox.showwarning("Provedor Ausente", "Selecione um Provedor IA na tela principal para gerenciar suas chaves.")
+            return
+
+        # Cria a janela pop-up (Toplevel)
+        popup = ctk.CTkToplevel(window)
+        popup.title(f"Gerenciar Chaves - {provedor_atual}")
+        popup.geometry("450x300")
+        popup.configure(fg_color="#f5f5f5")
+        popup.grab_set() # Bloqueia a janela de trás até fechar o pop-up
+        popup.resizable(False, False) # impede o redimensionamento da janela pelo usuário
+
+        ctk.CTkLabel(popup, text=f"Chaves Salvas para {provedor_atual}", font=("Arial", 14, "bold"), text_color="#333333").pack(pady=(15, 10))
+
+        # Lista as chaves atuais gravadas no .env para o provedor
+        chaves = obter_chaves_salvas(provedor_atual)
+
+        # Container para a lista de chaves (com scrollbar se houver muitas)
+        frame_lista = ctk.CTkScrollableFrame(popup, width=400, height=160, fg_color="#ffffff", border_width=1, border_color="#cccccc")
+        frame_lista.pack(padx=20, pady=5)
+
+        def atualizar_lista_popup():
+            # Limpa o frame para reconstruir
+            for widget in frame_lista.winfo_children():
+                widget.destroy()
+
+            chaves_atualizadas = obter_chaves_salvas(provedor_atual)
+            if not chaves_atualizadas:
+                ctk.CTkLabel(frame_lista, text="Nenhuma chave salva para este provedor.", font=("Arial", 11, "italic"), text_color="#7f8c8d").pack(pady=40)
+                return
+            
+            for i, chv in enumerate(chaves_atualizadas):
+                frame_linha = ctk.CTkFrame(frame_lista, fg_color="transparent")
+                frame_linha.pack(fill="x", pady=4, padx=5)
+            
+            # Exibe a chave mascarada ou cortada para proteção visual se for muito longa
+            texto_chave = chv if len(chv) <= 25 else f"{chv[:10]}...{chv[-10:]}"
+
+            lbl_chv = ctk.CTkLabel(frame_linha, text=texto_chave, font=("Arial", 11), anchor="w")
+            lbl_chv.pack(side="left", fill="x", expand=True)
+
+            # Botão para Selecionar a Chave
+            btn_sel = ctk.CTkButton(
+                    frame_linha, text="Selecionar", font=("Arial", 10, "bold"),
+                    fg_color="#2ecc71", hover_color="#27ae60", width=75, height=22,
+                    command=lambda c=chv: acionar_selecao_chave(c)
+                )
+            btn_sel.pack(side="right", padx=2)
+
+            # Botão para Deletar a Chave
+            btn_del = ctk.CTkButton(
+                    frame_linha, text="Excluir", font=("Arial", 10, "bold"),
+                    fg_color="#e74c3c", hover_color="#c0392b", width=60, height=22,
+                    command=lambda c=chv: acionar_exclusao_chave(c)
+                )
+            btn_del.pack(side="right", padx=5)
+        
+        # Função que define a chave na tela principal e fecha o popup
+        def acionar_selecao_chave(chave_selecionada):
+            combo_key.set(chave_selecionada) # Injeta a chave no campo principal
+            popup.destroy()                  # Fecha a janela popup automaticamente
+            
+        def acionar_exclusao_chave(chave_alvo):
+            if messagebox.askyesno("Confirmar Exclusão", "Tem certeza que deseja apagar esta chave?"):
+                remover_chave_salva(provedor_atual, chave_alvo)
+                atualizar_lista_popup()
+                atualizar_campos_por_provedor()
+
+        # Carrega a lista pela primeira vez no pop-up
+        atualizar_lista_popup()
+
+        # Botão Fechar no rodapé do pop-up
+        ctk.CTkButton(popup, text="Fechar", font=("Arial", 11, "bold"), width=100, command=popup.destroy).pack(pady=(15, 10))
 
     # --- FUNÇÕES DE ATUALIZAÇÃO DINÂMICA (EVENTOS) ---
     def atualizar_campos_por_provedor(event=None):
@@ -78,6 +155,14 @@ def open_interface():
         
         threading.Thread(target=buscar_modelos_thread, args=(provedor_selecionado, chave_atual), daemon=True).start()
 
+    # Variável de controle de cancelamento (Booleana pura)
+    cancelado_pelo_usuario = False
+    
+    # Função auxiliar que o processador vai chamar para saber se o usuário cancelou
+    def verificar_se_cancelou():
+        nonlocal cancelado_pelo_usuario
+        return cancelado_pelo_usuario
+
     # --- FUNÇÕES DOS BOTÕES DE BUSCA ---
     def acionar_busca_prompt():
         caminho = busca_instrucoes()
@@ -102,6 +187,7 @@ def open_interface():
             label_status.configure(text="Status: Pronto para iniciar")
             progress_bar.set(0.0)
             label_porcentagem.configure(text="0%")
+            chk_subpastas_var.set(False)
 
     def atualizar_progresso_gui(porcentagem, texto_status):
         window.after(0, lambda: progress_bar.set(porcentagem))
@@ -110,6 +196,10 @@ def open_interface():
 
     # --- GATILHO DE EXECUÇÃO ---
     def iniciar_execucao():
+        nonlocal cancelado_pelo_usuario
+        cancelado_pelo_usuario = False # Reseta o estado ao iniciar
+
+        # Coleta dados interface
         provedor = str(combo_provider.get()).strip()
         chave = str(combo_key.get()).strip()
         modelo = str(combo_model.get()).strip()
@@ -141,6 +231,23 @@ def open_interface():
         if "Nenhum" in prompt or "Nenhuma" in entrada or "Nenhum" in saida:
             messagebox.showwarning("Arquivos Ausentes", "Selecione todos os caminhos antes de iniciar.")
             return
+        
+        # 1. BLOQUEIO TOTAL DE CAMPOS E BOTÕES (EXCETO CANCELAR)
+        combo_provider.configure(state="disabled")
+        combo_key.configure(state="disabled")
+        combo_model.configure(state="disabled")
+        btn_config_chaves.configure(state="disabled")
+        
+        btn_buscar_prompt.configure(state="disabled")
+        btn_buscar_entrada.configure(state="disabled")
+        btn_definir_saida.configure(state="disabled")
+        chk_subpastas.configure(state="disabled")
+        
+        btn_processar.configure(state="disabled", text="PROCESSANDO...")
+        btn_limpar.configure(state="disabled")
+        
+        # Ativa unicamente o botão de Cancelar
+        btn_cancelar.configure(state="normal", text="Cancelar")
 
         frame_progresso_container.pack(pady=(15, 5))
         progress_bar.pack(pady=(0, 20))
@@ -152,7 +259,8 @@ def open_interface():
                 provider=provedor, key=chave, model_version=modelo,
                 caminho_prompt=prompt, pasta_entrada=entrada, pasta_saida=saida,
                 buscar_subpastas=subpastas_ativo,
-                callback_progresso=atualizar_progresso_gui
+                callback_progresso=atualizar_progresso_gui,
+                checar_cancelamento=verificar_se_cancelou
             )
 
             if resultado == "Sucesso":
@@ -167,7 +275,43 @@ def open_interface():
             frame_progresso_container.pack_forget()
             progress_bar.pack_forget()
 
+            # --- TRATAMENTO DO RETORNO APÓS TERMINAR A THREAD ---
+            def finalizar():
+                # 2. LIBERAÇÃO DE TODOS OS CAMPOS APÓS O TÉRMINO
+                combo_provider.configure(state="readonly")
+                combo_key.configure(state="normal")
+                combo_model.configure(state="readonly")
+                btn_config_chaves.configure(state="normal")
+                
+                btn_buscar_prompt.configure(state="normal")
+                btn_buscar_entrada.configure(state="normal")
+                btn_definir_saida.configure(state="normal")
+                chk_subpastas.configure(state="normal")
+                
+                btn_processar.configure(state="normal", text="INICIAR PROCESSAMENTO")
+                btn_cancelar.configure(state="disabled", text="Cancelar")
+                btn_limpar.configure(state="normal")
+                
+                frame_progresso_container.pack_forget()
+                progress_bar.pack_forget()
+                
+                if resultado == "Sucesso":
+                    messagebox.showinfo("Concluído", "Todos os arquivos foram processados com sucesso!")
+                elif resultado == "CANCELADO":
+                    messagebox.showwarning("Interrompido", "O processamento foi cancelado pelo usuário. O relatório e o log foram gerados com os dados parciais.")
+                else:
+                    messagebox.showerror("Erro", resultado)
+            
+            # Devolve a atualização dos botões para a thread principal da GUI
+            window.after(0, finalizar)
+
         threading.Thread(target=rotina_segundo_plano).start()
+
+    # --- CANCELAMENTO PROCESSAMENTO ---
+    def solicitar_cancelamento():
+        nonlocal cancelado_pelo_usuario
+        cancelado_pelo_usuario = True
+        btn_cancelar.configure(state="disabled", text="Cancelando...")
 
     # --- GATILHO INTELIGENTE PARA QUANDO O USUÁRIO DIGITA UMA CHAVE MANUALMENTE ---
     def disparar_busca_por_digitacao(*args):
@@ -216,16 +360,26 @@ def open_interface():
     frame_config = ctk.CTkFrame(window, fg_color="#ffffff", border_width=1, border_color="#cccccc", corner_radius=8)
     frame_config.pack(padx=30, pady=10, fill="x")
 
+    # Provider
     ctk.CTkLabel(frame_config, text="Provedor IA:", font=("Arial", 11, "bold"), text_color="#444444").grid(row=0, column=0, padx=(20, 15), pady=12, sticky="e")
-    # Agora inicia com "Nenhum" por padrão
     combo_provider = ctk.CTkComboBox(frame_config, values=["Nenhum", "Gemini", "OpenAI", "Claude"], state="readonly", width=310, command=atualizar_campos_por_provedor)
     combo_provider.set("Nenhum")
     combo_provider.grid(row=0, column=1, columnspan=2, pady=12, sticky="w")
 
+    # API KEY
     ctk.CTkLabel(frame_config, text="API Key:", font=("Arial", 11, "bold"), text_color="#444444").grid(row=1, column=0, padx=(20, 15), pady=12, sticky="e")
     combo_key = ctk.CTkComboBox(frame_config, width=310, state="normal")
-    combo_key.grid(row=1, column=1, columnspan=2, pady=12, sticky="w")
+    combo_key.grid(row=1, column=1, pady=12, sticky="w")
 
+    btn_config_chaves = ctk.CTkButton(
+        frame_config, text="⚙️", font=("Arial", 14), width=40, height=28, 
+        fg_color="#f0f0f0", hover_color="#e0e0e0", text_color="#333333",
+        border_width=1, border_color="#cccccc", corner_radius=6, cursor="hand2",
+        command=abrir_gerenciador_chaves
+    )
+    btn_config_chaves.grid(row=1, column=2, padx=(5, 20), pady=12, sticky="w")
+
+    # Model
     ctk.CTkLabel(frame_config, text="Modelo IA:", font=("Arial", 11, "bold"), text_color="#444444").grid(row=2, column=0, padx=(20, 15), pady=12, sticky="e")
     combo_model = ctk.CTkComboBox(frame_config, width=310, state="disabled")
     combo_model.set("Selecione um Provedor IA...")
@@ -238,17 +392,20 @@ def open_interface():
     # Prompt
     ctk.CTkLabel(frame_arquivos, text="Instruções (Prompt):", font=("Arial", 11, "bold"), text_color="#444444").grid(row=0, column=0, padx=(20, 15), pady=10, sticky="e")
     ctk.CTkEntry(frame_arquivos, textvariable=caminho_prompt_var, width=260, state="readonly").grid(row=0, column=1, pady=10, sticky="w")
-    ctk.CTkButton(frame_arquivos, text="Buscar...", font=("Arial", 10), width=80, cursor="hand2", command=acionar_busca_prompt).grid(row=0, column=2, padx=(15, 20), pady=10, sticky="w")
+    btn_buscar_prompt = ctk.CTkButton(frame_arquivos, text="Buscar...", font=("Arial", 10), width=80, cursor="hand2", command=acionar_busca_prompt)
+    btn_buscar_prompt.grid(row=0, column=2, padx=(15, 20), pady=10, sticky="w")
 
     # Entrada
     ctk.CTkLabel(frame_arquivos, text="Pasta dos PDFs:", font=("Arial", 11, "bold"), text_color="#444444").grid(row=1, column=0, padx=(20, 15), pady=10, sticky="e")
     ctk.CTkEntry(frame_arquivos, textvariable=pasta_entrada_var, width=260, state="readonly").grid(row=1, column=1, pady=10, sticky="w")
-    ctk.CTkButton(frame_arquivos, text="Buscar...", font=("Arial", 10), width=80, cursor="hand2", command=acionar_busca_entrada).grid(row=1, column=2, padx=(15, 20), pady=10, sticky="w")
+    btn_buscar_entrada = ctk.CTkButton(frame_arquivos, text="Buscar...", font=("Arial", 10), width=80, cursor="hand2", command=acionar_busca_entrada)
+    btn_buscar_entrada.grid(row=1, column=2, padx=(15, 20), pady=10, sticky="w")
 
     # Saída
     ctk.CTkLabel(frame_arquivos, text="Salvar Relatório:", font=("Arial", 11, "bold"), text_color="#444444").grid(row=2, column=0, padx=(20, 15), pady=10, sticky="e")
     ctk.CTkEntry(frame_arquivos, textvariable=pasta_saida_var, width=260, state="readonly").grid(row=2, column=1, pady=10, sticky="w")
-    ctk.CTkButton(frame_arquivos, text="Definir...", font=("Arial", 10), width=80, cursor="hand2", command=acionar_busca_saida).grid(row=2, column=2, padx=(15, 20), pady=10, sticky="w")
+    btn_definir_saida = ctk.CTkButton(frame_arquivos, text="Definir...", font=("Arial", 10), width=80, cursor="hand2", command=acionar_busca_saida)
+    btn_definir_saida.grid(row=2, column=2, padx=(15, 20), pady=10, sticky="w")
 
     ctk.CTkLabel(frame_arquivos, text="Opções Avançadas:", font=("Arial", 11, "bold"), text_color="#444444").grid(row=3, column=0, padx=(20, 15), pady=10, sticky="e")
 
@@ -268,10 +425,19 @@ def open_interface():
     )
     btn_processar.pack(side="left", padx=10)
 
+    # Botão Cancelar
+    btn_cancelar = ctk.CTkButton(
+        frame_botoes_acao, text="Cancelar", font=("Arial", 12, "bold"),
+        fg_color="#D32F2F", hover_color="#B71C1C", text_color="white",
+        border_width=2, border_color="#9c1f1f", corner_radius=10, height=45, width=120,
+        state="disabled", cursor="hand2", command=solicitar_cancelamento
+    )
+    btn_cancelar.pack(side="left", padx=10)
+
     btn_limpar = ctk.CTkButton(
         frame_botoes_acao, text="LIMPAR CAMPOS", font=("Arial", 12, "bold"),
-        fg_color="#e74c3c", hover_color="#c0392b", text_color="white",
-        border_width=2, border_color="#962d22", corner_radius=10, height=45, width=160,
+        fg_color="#90D5FF", hover_color="#89CFF0", text_color="white",
+        border_width=2, border_color="#89CFF0", corner_radius=10, height=45, width=160,
         cursor="hand2", command=limpar_todos_os_campos
     )
     btn_limpar.pack(side="left", padx=10)

@@ -78,7 +78,7 @@ def diretorio_saida():
         return None
     
 # Realizar o processamento dos arquivos PDFs mediante às instruções do PROMPT
-def processar_arquivos(provider, key, model_version, caminho_prompt, pasta_entrada, pasta_saida, buscar_subpastas, callback_progresso):
+def processar_arquivos(provider, key, model_version, caminho_prompt, pasta_entrada, pasta_saida, buscar_subpastas, callback_progresso, checar_cancelamento):
     try:
         # Configuração da IA usando os dados coletados da tela na hora do clique
         chamar_ia = seletor_ia(provider=provider, key=key, model=model_version)
@@ -128,6 +128,12 @@ def processar_arquivos(provider, key, model_version, caminho_prompt, pasta_entra
         # loop "Enumerate" corrigido
         for indice, nome_arquivo in enumerate(arquivos_pdf, start=1):
             try:
+                # 1. CHECAGEM DE CANCELAMENTO ANTES DE PROCESSAR O PRÓXIMO ARQUIVO
+                if checar_cancelamento():
+                    linhas_log.append(f"     => PROCESSAMENTO INTERROMPIDO PELO USUÁRIO no arquivo {nome_arquivo}.")
+                    salvar_log_final(pasta_saida, linhas_log)
+                    return "CANCELADO"
+                
                 # Calcula a porcentagem e cria a sua mensagem original de progresso
                 porcentagem = indice / total_arquivos
                 mensagem_progresso = f"Processando ({indice}/{total_arquivos}): {nome_arquivo}..."
