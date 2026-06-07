@@ -46,7 +46,7 @@ def seletor_ia(provider, key, model):
         messagebox.showwarning(f"Aviso:", "É preciso selecionar um provedor IA!")
         return None
     
-def listar_modelos_disponiveis(provider, key):
+def listar_modelos_disponiveis(provider, key, model=""):
     if not key or not key.strip():
         return []
     
@@ -120,8 +120,50 @@ def listar_modelos_disponiveis(provider, key):
                 return [f"ERRO: Falha na API da OpenAI ({str(e)})"]
 
         elif provider == "claude":
-            modelos = ["claude-3-5-sonnet", "claude-3-5-haiku", "claude-3-opus", "claude-3-haiku"]
+            try:
+                import anthropic
+                
+                # Inicializa o cliente real com a chave
+                client = anthropic.Anthropic(api_key=key)
+                
+                # Limpa o texto do modelo digitado
+                modelo_teste = str(model).strip()
+                
+                # Se o usuário ainda não digitou nada ou está com o placeholder, 
+                # usamos um modelo padrão apenas para testar se a CHAVE é válida e tem saldo.
+                if not modelo_teste or "Digite" in modelo_teste or "manual" in modelo_teste:
+                    modelo_teste = "claude-sonnet-4-6" 
 
+                # O VERDADEIRO TESTE REATIVADO:
+                # Faz o ping usando o modelo para disparar as suas exceções caso haja erros!
+                client.messages.create(
+                    model=modelo_teste,
+                    max_tokens=1,
+                    messages=[
+                        {"role": "user", "content": "Validar conexao"}
+                    ]
+                )
+                
+                # Se a chave e o modelo estão 100% corretos, retornamos uma lista vazia.
+                # Isso indica para a interface que não há "sugestões" a preencher, deixando o campo livre.
+                return []
+
+            except anthropic.AuthenticationError:
+                return ["ERRO: Chave inválida (caracteres incorretos ou revogada)."]
+                
+            except anthropic.APIStatusError as e:
+                erro_msg = str(e).lower()
+                if "credit" in erro_msg or "balance" in erro_msg or "quota" in erro_msg or e.status_code == 429:
+                    return ["ERRO: Conta Anthropic sem saldo ou créditos."]
+                    
+                elif e.status_code == 404:
+                    return [f"ERRO API (404): O modelo '{modelo_teste}' não foi encontrado."]
+                    
+                return [f"ERRO API ({e.status_code}): {e.message}"]
+                
+            except Exception as e:
+                return [f"ERRO: Não foi possível validar."]
+        
     except Exception as e:
         print(f"Erro ao listar modelos do {provider}: {str(e)}")
         return []

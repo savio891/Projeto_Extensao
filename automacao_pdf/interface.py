@@ -17,7 +17,14 @@ def open_interface():
     window.title("Automação Processamento de PDFs com IA")
     window.geometry("700x600")
     window.configure(fg_color="#f5f5f5")
-    ctk.set_appearance_mode("Light") 
+    ctk.set_appearance_mode("Light")
+
+    # --- CONFIGURAÇÃO DO ÍCONE DA JANELA ---
+    try:
+        # Para o topo da janela e barra de tarefas do Windows
+        window.iconbitmap("image.ico")
+    except Exception as e:
+        print(f"Não foi possível carregar o ícone (.ico): {e}")
 
     # --- VARIÁVEIS DE CONTROLE ---
     caminho_prompt_var = ctk.StringVar(value="Nenhum arquivo selecionado")
@@ -107,11 +114,13 @@ def open_interface():
         
         # 1. VALIDAÇÃO SE FOR "NENHUM": Limpa e desativa os campos de credenciais
         if provedor_selecionado == "Nenhum":
-            combo_key.configure(values=[])
+            combo_key.configure(values=[], state="disabled")
             combo_key.set("")
             combo_model.configure(values=["Selecione um Provedor IA..."], state="disabled")
             combo_model.set("Selecione um Provedor IA...")
             return  # Interrompe a função aqui de forma segura
+        
+        combo_key.configure(state="normal")
 
         # 2. Busca a chave já salva no .env para esse provedor específico
         chaves_salvas = obter_chaves_salvas(provedor_selecionado)
@@ -127,7 +136,7 @@ def open_interface():
 
         # 3. Se não houver chave salva, avisa o usuário que ele precisa inserir uma para liberar os modelos
         if not chave_atual.strip():
-            combo_model.configure(values=["Insira uma API key válida..."], state="disabled")
+            combo_model.configure(values=[])
             combo_model.set("Insira uma API key válida...")
             return
 
@@ -137,7 +146,8 @@ def open_interface():
 
         # 5. Dispara uma Thread separada para buscar os modelos na API vinculados a essa Chave específica
         def buscar_modelos_thread(prov, key):
-            modelos_reais = listar_modelos_disponiveis(prov, key)
+            model_selecionado = combo_model.get()
+            modelos_reais = listar_modelos_disponiveis(prov, key, model_selecionado)
 
             # Se o primeiro item começar com "ERRO:", exibe o aviso específico da API
             if modelos_reais and str(modelos_reais[0]).startswith("ERRO:"):
@@ -145,13 +155,23 @@ def open_interface():
                 window.after(0, lambda: combo_model.configure(values=[mensagem_erro]))
                 window.after(0, lambda: combo_model.set(mensagem_erro))
                 window.after(0, lambda: combo_model.configure(state="disabled"))
-            elif modelos_reais:
-                window.after(0, lambda: combo_model.configure(values=modelos_reais, state="readonly"))
-                window.after(0, lambda: combo_model.set(modelos_reais[0]))
             else:
-                window.after(0, lambda: combo_model.configure(values=["Chave API Inválida ou Sem Permissão"]))
-                window.after(0, lambda: combo_model.set("Chave API Inválida ou Sem Permissão"))
-                window.after(0, lambda: combo_model.configure(state="disabled"))
+                # SE FOR O CLAUDE: Não há sugestões, configuramos o modo manual com placeholder
+                if prov.lower() == "claude":
+                    placeholder_texto = "Digite o modelo manualmente..."
+                    window.after(0, lambda: combo_model.configure(values=[], state="normal"))
+                    window.after(0, lambda: combo_model.set(placeholder_texto))
+                    
+                else:
+                    # PARA GEMINI E OPENAI:
+                    # Forçamos o estado para 'readonly' ANTES de injetar a nova lista.
+                    # Isso remove permanentemente a caixa de edição de texto do Claude.
+                    if modelos_reais:
+                        window.after(0, lambda: combo_model.configure(state="readonly", values=modelos_reais))
+                        window.after(0, lambda: combo_model.set(modelos_reais[0]))
+                    else:
+                        window.after(0, lambda: combo_model.configure(values=["Nenhum modelo encontrado"], state="disabled"))
+                        window.after(0, lambda: combo_model.set("Nenhum modelo encontrado"))
         
         threading.Thread(target=buscar_modelos_thread, args=(provedor_selecionado, chave_atual), daemon=True).start()
 
@@ -318,7 +338,7 @@ def open_interface():
         prov = combo_provider.get()
         key = combo_key.get().strip()
         
-        if prov == "Nenhum":
+        if prov == "Nenhum" or combo_provider.cget("state") == "disabled":
             return
         
         if not key:
@@ -336,19 +356,27 @@ def open_interface():
         def buscar_modelos_digitados(prov, key):
             modelos_reais = listar_modelos_disponiveis(prov, key)
             
-            # Se o primeiro item começar com "ERRO:", exibe o aviso específico da API
             if modelos_reais and str(modelos_reais[0]).startswith("ERRO:"):
                 mensagem_erro = modelos_reais[0]
-                window.after(0, lambda: combo_model.configure(values=[mensagem_erro], state="disabled"))
+                window.after(0, lambda: combo_model.configure(values=[mensagem_erro]))
                 window.after(0, lambda: combo_model.set(mensagem_erro))
                 window.after(0, lambda: combo_model.configure(state="disabled"))
-            elif modelos_reais:
-                window.after(0, lambda: combo_model.configure(values=modelos_reais, state="readonly"))
-                window.after(0, lambda: combo_model.set(modelos_reais[0]))
             else:
-                window.after(0, lambda: combo_model.configure(values=["Chave API Inválida ou Sem Permissão"], state="disabled"))
-                window.after(0, lambda: combo_model.set("Chave API Inválida ou Sem Permissão"))
-                window.after(0, lambda: combo_model.configure(state="disabled"))
+                # --- MESMA CORREÇÃO APLICADA NA DIGITAÇÃO DA CHAVE ---
+                if prov.lower() == "claude":
+                    placeholder_texto = "Digite o modelo manualmente..."
+                    window.after(0, lambda: combo_model.configure(values=[], state="normal"))
+                    window.after(0, lambda: combo_model.set(placeholder_texto))
+                else:
+                    # PARA GEMINI E OPENAI:
+                    # Forçamos o estado para 'readonly' ANTES de injetar a nova lista.
+                    # Isso remove o modo de edição do Claude se o usuário colar uma chave nova.
+                    if modelos_reais:
+                        window.after(0, lambda: combo_model.configure(state="readonly", values=modelos_reais))
+                        window.after(0, lambda: combo_model.set(modelos_reais[0]))
+                    else:
+                        window.after(0, lambda: combo_model.configure(values=["Nenhum modelo encontrado"], state="disabled"))
+                        window.after(0, lambda: combo_model.set("Nenhum modelo encontrado"))
 
         threading.Thread(target=buscar_modelos_digitados, args=(prov, key), daemon=True).start()
 
@@ -436,8 +464,8 @@ def open_interface():
 
     btn_limpar = ctk.CTkButton(
         frame_botoes_acao, text="LIMPAR CAMPOS", font=("Arial", 12, "bold"),
-        fg_color="#90D5FF", hover_color="#89CFF0", text_color="white",
-        border_width=2, border_color="#89CFF0", corner_radius=10, height=45, width=160,
+        fg_color="#FFD700", hover_color="#ae9c27", text_color="white",
+        border_width=2, border_color="#E1A95F", corner_radius=10, height=45, width=160,
         cursor="hand2", command=limpar_todos_os_campos
     )
     btn_limpar.pack(side="left", padx=10)
