@@ -300,7 +300,12 @@ def open_interface():
                 # 2. LIBERAÇÃO DE TODOS OS CAMPOS APÓS O TÉRMINO
                 combo_provider.configure(state="readonly")
                 combo_key.configure(state="normal")
-                combo_model.configure(state="readonly")
+
+                if combo_provider.get().lower() == "claude":
+                    combo_model.configure(state="normal")
+                else:
+                    combo_model.configure(state="readonly")
+                    
                 btn_config_chaves.configure(state="normal")
                 
                 btn_buscar_prompt.configure(state="normal")
