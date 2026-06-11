@@ -3,6 +3,35 @@ import customtkinter as ctk
 from tkinter import ttk, messagebox
 from configurador import obter_chaves_salvas, armazenar_chave, carregar_chave, remover_chave_salva
 from gerenciador_ia import seletor_ia, listar_modelos_disponiveis
+import time
+
+# Tenta importar o módulo de splash do PyInstaller (só funciona dentro do .exe)
+try:
+    import pyi_splash
+except ImportError:
+    pyi_splash = None
+
+def carregar_sistema_com_porcentagem():
+    """Simula e atualiza a porcentagem na tela de abertura"""
+    if pyi_splash:
+        etapas = [
+            ("Iniciando o sistema...", 10),
+            ("Carregando layout e temas...", 30),
+            ("Lendo chaves do arquivo .env...", 50),
+            ("Conectando aos módulos OpenAI/Gemini/Claude...", 75),
+            ("Pronto!", 100)
+        ]
+        
+        for mensagem, porcentagem in etapas:
+            # Atualiza o texto que aparece embaixo da imagem
+            pyi_splash.update_text(f"{mensagem} ({porcentagem}%)")
+            time.sleep(0.4) # Um pequeno intervalo para o usuário conseguir ler
+            
+        # Fecha a tela de splash após atingir 100%
+        pyi_splash.close()
+
+# --- Chame a função antes de abrir a interface ---
+carregar_sistema_com_porcentagem()
 
 # --- IMPORTAÇÃO DO SEU MOTOR REAL ---
 from processador_ia import (
