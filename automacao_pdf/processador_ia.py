@@ -3,6 +3,7 @@ from extrator import extrair_texto_seguro # Reutilizar o extrator
 from tkinter import filedialog, messagebox # Recurso do Tkinter para selecionar diretórios
 from gerenciador_ia import seletor_ia
 from datetime import datetime
+import time
 
 # Função que busca PROMPT em um diretório para ser anexado
 def busca_instrucoes():
@@ -77,6 +78,29 @@ def diretorio_saida():
          
         return None
     
+
+def erro_transitorio_ia(erro: Exception) -> bool:
+    """
+    Analisa o erro da IA para determinar se é um problema temporário (rede/instabilidade)
+    ou um erro fatal (saldo esgotado, chave inválida, modelo incorreto).
+    """
+    mensagem_erro = str(erro).lower()
+    
+    # Lista de termos comuns que indicam falta de saldo, limite de cota estourado ou faturamento
+    termos_fatais = [
+        "quota", "insufficient", "exhausted", "credit", "rate_limit",
+        "balance", "depleted", "billing", "api_key", "invalid", 
+        "not found", "401", "403", "404", "not available"
+    ]
+    
+    # Se o erro contiver qualquer um desses termos, NÃO é transiente (é fatal)
+    for termo in termos_fatais:
+        if termo in mensagem_erro:
+            return False
+            
+    # Se não for um erro fatal conhecido, assumimos que é uma oscilação temporária
+    return True
+    
 # Realizar o processamento dos arquivos PDFs mediante às instruções do PROMPT
 def processar_arquivos(provider, key, model_version, caminho_prompt, pasta_entrada, pasta_saida, buscar_subpastas, callback_progresso, checar_cancelamento):
     try:
@@ -148,7 +172,41 @@ def processar_arquivos(provider, key, model_version, caminho_prompt, pasta_entra
 
                 if "Erro" not in texto_pdf:
                     # Resposta IA
-                    response_IA = chamar_ia(conteudo_prompt, texto_pdf)
+                    response_IA = None
+                    tentativas_maximas = 3
+
+                    for tentativa in range(1, tentativas_maximas + 1):
+                        try:
+                            # Tenta chamar a função que consulta o provedor escolhido
+                            response_IA = chamar_ia(conteudo_prompt, texto_pdf)
+                            # Se deu certo, quebra o laço de repetição do retry e segue o fluxo
+                            break
+                        except Exception as erro_ia:
+                            mensagem_bruta = str(erro_ia)
+
+                            # Registra o erro técnico bruto detalhado
+                            linhas_log.append(f"     [TÉCNICO] Falha na tentativa {tentativa}/{tentativas_maximas} para {nome_arquivo}: {mensagem_bruta}")
+
+                            # Se for a última tentativa OU se for um erro fatal (saldo/faturamento), propaga o erro para o except pai tratar
+                            if tentativa == tentativas_maximas or not erro_transitorio_ia(erro_ia):
+                                raise erro_ia
+
+                            # Se for um erro transitório (oscilação de rede), aguarda antes de tentar novamente
+                            tempo_espera = 5 * tentativa
+                            
+                            # --- DETECÇÃO INTELIGENTE DO CULPADO ---
+                            if "timeout" in mensagem_bruta or "connection" in mensagem_bruta:
+                                mensagem_alerta = f"⚠️ Conexão lenta ou queda de internet detectada! Tentando novamente em {tempo_espera}s..."
+                            else:
+                                # Erros como HTTP 429 ou 503 caem aqui
+                                mensagem_alerta = f"⚠️ Servidor da IA sobrecarregado ou instável! Tentando novamente em {tempo_espera}s..."
+
+                            linhas_log.append(f"     => Instabilidade temporária detetada. Aguardando {tempo_espera}s para tentar novamente...")
+                            
+                            # Forçamos a interface a exibir esse aviso piscando na barra de progresso/status
+                            callback_progresso(porcentagem, mensagem_alerta)
+
+                            time.sleep(tempo_espera)
 
                     if response_IA:
                         with open(pasta_saida, "a", encoding="utf-8") as f_escrita:

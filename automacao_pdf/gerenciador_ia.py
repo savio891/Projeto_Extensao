@@ -9,13 +9,16 @@ def seletor_ia(provider, key, model):
         model_obj = genai.GenerativeModel(model)
 
         def executar_gemini(instrucoes, texto):
-            response = model_obj.generate_content(f"{instrucoes}\n\nTexto do PDF:\n{texto}")
+            response = model_obj.generate_content(
+                f"{instrucoes}\n\nTexto do PDF:\n{texto}",
+                request_options={"timeout": 15.0}
+                )
             return response.text
         return executar_gemini
     
     elif provider == "claude":
         import anthropic
-        client = anthropic.Anthropic(api_key=key)
+        client = anthropic.Anthropic(api_key=key, timeout=15.0)
 
         def executar_claude(instrucoes, texto):
             response = client.messages.create(
@@ -31,7 +34,7 @@ def seletor_ia(provider, key, model):
     
     elif provider == "openai":
         import openai
-        client = openai.OpenAI(api_key=key)
+        client = openai.OpenAI(api_key=key, timeout=15.0)
 
         def executar_openai(instrucoes, texto):
             response = client.chat.completions.create(

@@ -239,6 +239,15 @@ def open_interface():
             chk_subpastas_var.set(False)
 
     def atualizar_progresso_gui(porcentagem, texto_status):
+
+        progress_bar.set(porcentagem)
+
+        # Se for uma mensagem de alerta/instabilidade, muda a cor do texto para chamar atenção
+        if "⚠️" in texto_status:
+            label_status.configure(text=texto_status, text_color="#E67E22") # Laranja de atenção
+        else:
+            label_status.configure(text=texto_status, text_color="black") # Cor normal para o fluxo comum
+    
         window.after(0, lambda: progress_bar.set(porcentagem))
         window.after(0, lambda: label_porcentagem.configure(text=f"{int(porcentagem * 100)}%"))
         window.after(0, lambda: label_status.configure(text=texto_status))
